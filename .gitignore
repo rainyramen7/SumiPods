@@ -1,0 +1,25 @@
+# Gradle / Build artifacts
+.gradle/
+.kotlin/
+build/
+app/build/
+captures/
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+
+# Local machine SDK & signing configuration
+local.properties
+*.jks
+*.keystore
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.externalNativeBuild/
+.cxx/
+
+# macOS
+.DS_Store
