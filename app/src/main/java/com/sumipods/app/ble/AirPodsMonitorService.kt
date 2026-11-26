@@ -29,9 +29,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Battery-friendly background service (SCAN_MODE_LOW_POWER in background, SCAN_MODE_BALANCED
- * when foregrounded) that listens for AirPods Pro BLE proximity packets, updates the quiet
- * battery notification, and slides up the MUJI Washi overlay sheet when the case opens.
+ * Connected-only foreground service:
+ * - Started ONLY when your paired AirPods connect to this phone.
+ * - Runs a single continuous SCAN_MODE_LOW_POWER BLE scan to read your live battery levels.
+ * - Automatically stops itself and removes its notification as soon as your AirPods disconnect,
+ *   ensuring zero idle battery drain and zero stranger AirPods notifications.
  */
 class AirPodsMonitorService : Service() {
 
@@ -54,7 +56,7 @@ class AirPodsMonitorService : Service() {
             return START_NOT_STICKY
         }
 
-        if (!PermissionHelper.hasBluetoothPermissions(this)) {
+        if (!PermissionHelper.hasBluetoothPermissions(this) || !repository.isPairedAirPodsConnected) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -81,7 +83,7 @@ class AirPodsMonitorService : Service() {
             ?: ScanPowerMode.LOW_POWER
         repository.scanner.startScanning(powerMode)
         startStaleCheckLoop()
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun observeStateAndPopups() {
@@ -90,6 +92,10 @@ class AirPodsMonitorService : Service() {
 
         serviceScope.launch {
             repository.state.collectLatest { state ->
+                if (!repository.isPairedAirPodsConnected) {
+                    stopSelf()
+                    return@collectLatest
+                }
                 notificationManager.notify(
                     NOTIFICATION_ID_MONITOR,
                     buildMonitorNotification(state)
@@ -101,6 +107,7 @@ class AirPodsMonitorService : Service() {
             repository.popupEvents.collect { popupState ->
                 if (!repository.preferences.value.autoPopupEnabled) return@collect
                 if (repository.isAppInForeground) return@collect
+                if (!repository.isPairedAirPodsConnected) return@collect
                 showCaseOpenPopup(popupState)
             }
         }
@@ -131,7 +138,7 @@ class AirPodsMonitorService : Service() {
         val summary = formatBatterySummary(state)
         val alert = NotificationCompat.Builder(this, CHANNEL_ID_POPUP)
             .setSmallIcon(R.drawable.ic_notification_pods)
-            .setContentTitle("${state.model.displayName} — Case Opened")
+            .setContentTitle("${state.model.displayName} Connected")
             .setContentText(summary)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
@@ -151,11 +158,11 @@ class AirPodsMonitorService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val title = if (state.hasAnyBattery) state.model.displayName else "SumiPods"
+        val title = state.connectedDeviceName ?: state.model.displayName
         val text = if (state.hasAnyBattery) {
             formatBatterySummary(state)
         } else {
-            "Low-power AirPods monitor active"
+            "Connected · reading battery..."
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID_MONITOR)
@@ -180,7 +187,7 @@ class AirPodsMonitorService : Service() {
                 add("Case $pct%${if (state.caseBattery.isCharging) "⚡" else ""}")
             }
         }
-        return if (parts.isEmpty()) "Low-power AirPods monitor active" else parts.joinToString("  ·  ")
+        return if (parts.isEmpty()) "Connected · reading battery..." else parts.joinToString("  ·  ")
     }
 
     private fun ensureNotificationChannels() {
@@ -190,7 +197,7 @@ class AirPodsMonitorService : Service() {
             "AirPods Battery Monitor",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Quietly displays AirPods Pro battery levels and detects when the case opens."
+            description = "Displays your connected AirPods battery levels while in use."
             setShowBadge(false)
         }
         val popupChannel = NotificationChannel(
@@ -198,7 +205,7 @@ class AirPodsMonitorService : Service() {
             "Case Open Alerts",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Fallback alert when AirPods case is opened without overlay permission."
+            description = "Fallback alert when your AirPods connect without overlay permission."
         }
         manager.createNotificationChannel(monitorChannel)
         manager.createNotificationChannel(popupChannel)
@@ -207,7 +214,7 @@ class AirPodsMonitorService : Service() {
     override fun onDestroy() {
         staleJob?.cancel()
         overlayController.dismiss()
-        if (!repository.isAppInForeground) {
+        if (!repository.isPairedAirPodsConnected || !repository.isAppInForeground) {
             repository.scanner.stopScanning()
         }
         serviceScope.cancel()
@@ -242,7 +249,10 @@ class AirPodsMonitorService : Service() {
             val intent = Intent(context, AirPodsMonitorService::class.java).apply {
                 action = ACTION_STOP
             }
-            context.startService(intent)
+            try {
+                context.stopService(intent)
+            } catch (_: Throwable) {
+            }
         }
     }
 }

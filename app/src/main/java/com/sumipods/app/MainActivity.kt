@@ -15,6 +15,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import com.sumipods.app.ble.AirPodsConnectionProbe
+import com.sumipods.app.ble.AirPodsDeviceMatcher
 import com.sumipods.app.ble.AirPodsMonitorService
 import com.sumipods.app.ble.AirPodsRepository
 import com.sumipods.app.ble.PermissionHelper
@@ -22,6 +25,7 @@ import com.sumipods.app.ble.ScanPowerMode
 import com.sumipods.app.ui.screens.MainScreen
 import com.sumipods.app.ui.screens.SettingsBottomSheet
 import com.sumipods.app.ui.theme.SumiPodsTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -34,7 +38,7 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        refreshPermissionsAndScanning()
+        refreshPermissionsAndConnection()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,7 +79,7 @@ class MainActivity : ComponentActivity() {
                         onToggleAutoPopup = { repository.setAutoPopupEnabled(it) },
                         onToggleBackgroundMonitor = { enabled ->
                             repository.setBackgroundMonitoringEnabled(enabled)
-                            if (enabled && hasBluetoothPermission) {
+                            if (enabled && hasBluetoothPermission && repository.isPairedAirPodsConnected) {
                                 AirPodsMonitorService.start(
                                     this@MainActivity,
                                     powerMode = ScanPowerMode.LOW_POWER
@@ -97,29 +101,49 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         repository.isAppInForeground = true
-        refreshPermissionsAndScanning()
+        refreshPermissionsAndConnection()
     }
 
     override fun onPause() {
         super.onPause()
         repository.isAppInForeground = false
-        if (!repository.preferences.value.backgroundMonitoringEnabled) {
+        if (!repository.preferences.value.backgroundMonitoringEnabled ||
+            !repository.isPairedAirPodsConnected
+        ) {
             repository.scanner.stopScanning()
         }
     }
 
-    private fun refreshPermissionsAndScanning() {
+    private fun refreshPermissionsAndConnection() {
         hasBluetoothPermission = PermissionHelper.hasBluetoothPermissions(this)
         hasOverlayPermission = PermissionHelper.canDrawOverlays(this)
 
-        if (hasBluetoothPermission) {
-            // Single steady low-power BLE scan — never restarted across foreground/background switches
-            repository.scanner.startScanning(powerMode = ScanPowerMode.LOW_POWER)
-            if (repository.preferences.value.backgroundMonitoringEnabled) {
-                AirPodsMonitorService.start(this, powerMode = ScanPowerMode.LOW_POWER)
-            }
-        } else {
+        if (!hasBluetoothPermission) {
             repository.scanner.stopScanning()
+            AirPodsMonitorService.stop(this)
+            return
+        }
+
+        // Strict Option 1: only scan & run monitor service when user's paired AirPods are connected
+        lifecycleScope.launch {
+            val connectedDevice = AirPodsConnectionProbe.findConnectedAirPods(this@MainActivity)
+            if (connectedDevice != null) {
+                repository.onPairedAirPodsConnected(
+                    deviceName = AirPodsDeviceMatcher.safeName(connectedDevice),
+                    address = connectedDevice.address
+                )
+                repository.scanner.startScanning(powerMode = ScanPowerMode.LOW_POWER)
+                if (repository.preferences.value.backgroundMonitoringEnabled) {
+                    AirPodsMonitorService.start(
+                        this@MainActivity,
+                        powerMode = ScanPowerMode.LOW_POWER
+                    )
+                }
+            } else {
+                repository.onPairedAirPodsDisconnected()
+                repository.scanner.stopScanning()
+                AirPodsMonitorService.stop(this@MainActivity)
+            }
         }
     }
 

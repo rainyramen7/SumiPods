@@ -10,13 +10,82 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
+/**
+ * Pure policy engine enforcing Option 1 (Connected AirPods Only):
+ * - Completely ignores all BLE packets unless the user's paired AirPods are actively connected.
+ * - Triggers an auto-popup on the first valid BLE battery packet after connection, or on a
+ *   subsequent case-lid open event while connected (with anti-spam cooldown).
+ */
+class ConnectedAirPodsPolicy(
+    private val lidOpenDetector: LidOpenDetector = LidOpenDetector(),
+    private val connectPopupCooldownMillis: Long = 10_000L
+) {
+    var isPairedConnected: Boolean = false
+        private set
+    private var pendingConnectPopup: Boolean = false
+    private var lastPopupEmittedMillis: Long = 0L
+
+    fun onConnected(isAppInForeground: Boolean) {
+        val wasConnected = isPairedConnected
+        isPairedConnected = true
+        if (!wasConnected) {
+            lidOpenDetector.reset()
+            pendingConnectPopup = !isAppInForeground
+        }
+    }
+
+    fun onDisconnected() {
+        isPairedConnected = false
+        pendingConnectPopup = false
+        lidOpenDetector.reset()
+    }
+
+    fun evaluatePacket(
+        packet: AirPodsState,
+        rssiThreshold: Int,
+        autoPopupEnabled: Boolean,
+        isAppInForeground: Boolean,
+        nowMillis: Long = packet.lastUpdatedMillis
+    ): PacketDecision {
+        if (!isPairedConnected) {
+            return PacketDecision(acceptPacket = false, triggerPopup = false)
+        }
+        if (packet.rssi < rssiThreshold) {
+            return PacketDecision(acceptPacket = false, triggerPopup = false)
+        }
+
+        val lidEvent = lidOpenDetector.onPacket(packet, rssiThreshold, nowMillis)
+        val withinCooldown = lastPopupEmittedMillis > 0L &&
+            (nowMillis - lastPopupEmittedMillis) < connectPopupCooldownMillis
+
+        val shouldPopup = !isAppInForeground &&
+            autoPopupEnabled &&
+            !withinCooldown &&
+            (pendingConnectPopup || lidEvent)
+
+        if (shouldPopup) {
+            pendingConnectPopup = false
+            lastPopupEmittedMillis = nowMillis
+        } else if (isAppInForeground) {
+            pendingConnectPopup = false
+        }
+
+        return PacketDecision(acceptPacket = true, triggerPopup = shouldPopup)
+    }
+
+    data class PacketDecision(
+        val acceptPacket: Boolean,
+        val triggerPopup: Boolean
+    )
+}
+
 class AirPodsRepository(context: Context) {
 
     private val appContext = context.applicationContext
     private val prefs: SharedPreferences =
         appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    private val lidOpenDetector = LidOpenDetector()
+    private val policy = ConnectedAirPodsPolicy()
 
     private val _preferences = MutableStateFlow(loadPreferences())
     val preferences: StateFlow<AppPreferences> = _preferences.asStateFlow()
@@ -25,7 +94,7 @@ class AirPodsRepository(context: Context) {
         if (_preferences.value.demoModeEnabled) {
             AirPodsState.demo(_preferences.value.demoPreset)
         } else {
-            AirPodsState(connectionStatus = ConnectionStatus.SCANNING)
+            AirPodsState(connectionStatus = ConnectionStatus.DISCONNECTED)
         }
     )
     val state: StateFlow<AirPodsState> = _state.asStateFlow()
@@ -40,17 +109,61 @@ class AirPodsRepository(context: Context) {
     )
 
     private var lastLiveState: AirPodsState? = null
+    private var connectedAddress: String? = null
+    private var connectedName: String? = null
 
     @Volatile
     var isAppInForeground: Boolean = false
 
+    val isPairedAirPodsConnected: Boolean
+        get() = policy.isPairedConnected
+
+    fun onPairedAirPodsConnected(deviceName: String?, address: String?) {
+        connectedName = deviceName
+        connectedAddress = address
+        policy.onConnected(isAppInForeground = isAppInForeground)
+
+        if (!_preferences.value.demoModeEnabled) {
+            _state.update { current ->
+                if (current.hasAnyBattery && current.connectionStatus == ConnectionStatus.CONNECTED) {
+                    current.copy(connectedDeviceName = deviceName)
+                } else {
+                    current.copy(
+                        connectedDeviceName = deviceName,
+                        connectionStatus = ConnectionStatus.SCANNING
+                    )
+                }
+            }
+        }
+    }
+
+    fun onPairedAirPodsDisconnected(address: String? = null) {
+        if (address != null && connectedAddress != null && address != connectedAddress) {
+            return
+        }
+        connectedAddress = null
+        connectedName = null
+        lastLiveState = null
+        policy.onDisconnected()
+
+        if (!_preferences.value.demoModeEnabled) {
+            _state.value = AirPodsState(connectionStatus = ConnectionStatus.DISCONNECTED)
+        }
+    }
+
     fun onLivePacket(packet: AirPodsState) {
         val currentPrefs = _preferences.value
 
-        // Main screen accepts packets down to -95 dBm so your AirPods are never missed on a desk.
-        if (packet.rssi < DISPLAY_MIN_RSSI) return
+        // Strict Option 1 gate: reject all BLE packets when user's paired AirPods are disconnected
+        val decision = policy.evaluatePacket(
+            packet = packet,
+            rssiThreshold = currentPrefs.proximityLevel.rssiThreshold,
+            autoPopupEnabled = currentPrefs.autoPopupEnabled,
+            isAppInForeground = isAppInForeground
+        )
+        if (!decision.acceptPacket) return
 
-        // Prefer closer/Pro packets if multiple AirPods are nearby simultaneously
+        // Prefer closer/stronger signal if multiple AirPods are nearby while user's are connected
         val prev = lastLiveState
         if (prev != null &&
             (packet.lastUpdatedMillis - prev.lastUpdatedMillis) < 3_500L &&
@@ -60,23 +173,27 @@ class AirPodsRepository(context: Context) {
             return
         }
 
-        lastLiveState = packet
+        val enriched = packet.copy(connectedDeviceName = connectedName)
+        lastLiveState = enriched
         if (!currentPrefs.demoModeEnabled) {
-            _state.value = packet
+            _state.value = enriched
         }
 
-        // Always keep LidOpenDetector state in sync, but only emit popup when app is not open
-        val isLidOpenEvent = lidOpenDetector.onPacket(
-            packet,
-            currentPrefs.proximityLevel.rssiThreshold
-        )
-        if (!isAppInForeground && currentPrefs.autoPopupEnabled && isLidOpenEvent) {
-            _popupEvents.tryEmit(packet)
+        if (decision.triggerPopup) {
+            _popupEvents.tryEmit(enriched)
         }
     }
 
     fun onScannerStatusChanged(status: ConnectionStatus) {
         if (_preferences.value.demoModeEnabled) return
+        if (status == ConnectionStatus.NO_PERMISSION || status == ConnectionStatus.BLUETOOTH_OFF) {
+            _state.update { it.copy(connectionStatus = status) }
+            return
+        }
+        if (!policy.isPairedConnected) {
+            _state.update { it.copy(connectionStatus = ConnectionStatus.DISCONNECTED) }
+            return
+        }
         val current = _state.value
         if (status == ConnectionStatus.SCANNING && current.connectionStatus == ConnectionStatus.CONNECTED) {
             return
@@ -86,12 +203,19 @@ class AirPodsRepository(context: Context) {
 
     fun checkStaleState(nowMillis: Long = System.currentTimeMillis()) {
         if (_preferences.value.demoModeEnabled) return
+        if (!policy.isPairedConnected) {
+            _state.value = AirPodsState(connectionStatus = ConnectionStatus.DISCONNECTED)
+            return
+        }
         val current = _state.value
         if (current.connectionStatus == ConnectionStatus.CONNECTED &&
             current.lastUpdatedMillis > 0L &&
             (nowMillis - current.lastUpdatedMillis) > STALE_TIMEOUT_MILLIS
         ) {
-            _state.value = AirPodsState(connectionStatus = ConnectionStatus.SCANNING)
+            _state.value = AirPodsState(
+                connectedDeviceName = connectedName,
+                connectionStatus = ConnectionStatus.SCANNING
+            )
         }
     }
 
@@ -117,12 +241,18 @@ class AirPodsRepository(context: Context) {
             _state.value = AirPodsState.demo(_preferences.value.demoPreset)
         } else {
             val live = lastLiveState
-            _state.value = if (live != null &&
+            _state.value = if (policy.isPairedConnected &&
+                live != null &&
                 (System.currentTimeMillis() - live.lastUpdatedMillis) <= STALE_TIMEOUT_MILLIS
             ) {
                 live
+            } else if (policy.isPairedConnected) {
+                AirPodsState(
+                    connectedDeviceName = connectedName,
+                    connectionStatus = ConnectionStatus.SCANNING
+                )
             } else {
-                AirPodsState(connectionStatus = ConnectionStatus.SCANNING)
+                AirPodsState(connectionStatus = ConnectionStatus.DISCONNECTED)
             }
         }
     }
@@ -180,6 +310,5 @@ class AirPodsRepository(context: Context) {
         private const val KEY_DEMO_MODE = "demo_mode"
         private const val KEY_DEMO_PRESET = "demo_preset"
         private const val STALE_TIMEOUT_MILLIS = 45_000L
-        private const val DISPLAY_MIN_RSSI = -95
     }
 }

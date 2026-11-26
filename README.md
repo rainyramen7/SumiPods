@@ -6,8 +6,8 @@ A minimalist Android companion app for checking **Apple AirPods Pro 3 / Pro 2** 
 
 - **Real-time AirPods Pro 3 & Pro 2 BLE Decoding**: Parses Apple Continuity Proximity Pairing (`0x004C` / `0x07`) advertisements for Left, Right, and MagSafe Case battery percentages (10% steps), charging flags, in-ear detection, and case lid state.
 - **Sumi-e Ink Battery Bars**: Custom Jetpack Compose `Canvas` 10-step bars rendered as organic sumi ink strokes with soft *nijimi* (滲み) bleed, *kasure* (掠れ) dry-brush texture, ochre charging shimmer, and Shu-iro vermilion ink at ≤ 20%.
-- **Floating Case-Open Auto-Popup**: Slides up a translucent MUJI Washi sheet over any app when you flip open the AirPods case (and stays suppressed when SumiPods is already open).
-- **Battery-Friendly Monitoring**: Runs a single continuous `SCAN_MODE_LOW_POWER` BLE scan without foreground/background scan restarts.
+- **Connected AirPods Only (Zero False Positives)**: Strictly gates BLE scanning, notifications, and popups on your own paired AirPods being actively connected via Bluetooth (`ACTION_ACL_CONNECTED` / A2DP / HFP), eliminating nearby strangers' AirPods popups and yielding 0% idle BLE battery drain when disconnected.
+- **Floating Auto-Popup**: Slides up a translucent MUJI Washi sheet over any app when your paired AirPods connect or open their case (and stays suppressed when SumiPods is already open).
 - **Bilingual Japanese Micro-Labels**: Optional subtle Kanji/Katakana markers (`左 / 右 / 充電ケース`), toggleable in Settings.
 
 ## Tech Stack

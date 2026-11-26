@@ -28,6 +28,7 @@ enum class AirPodsModel(
 enum class ConnectionStatus {
     CONNECTED,
     SCANNING,
+    DISCONNECTED,
     NO_PERMISSION,
     BLUETOOTH_OFF,
     DEMO
@@ -38,9 +39,9 @@ enum class ProximityLevel(
     val labelEn: String,
     val labelJp: String
 ) {
-    CLOSE(-68, "Close", "近距離"),
-    MEDIUM(-82, "Medium", "標準"),
-    WIDE(-95, "Wide", "広範囲")
+    CLOSE(-62, "Close", "近距離"),
+    MEDIUM(-74, "Medium", "標準"),
+    WIDE(-88, "Wide", "広範囲")
 }
 
 enum class DemoPreset(
@@ -69,6 +70,7 @@ data class ComponentBattery(
 data class AirPodsState(
     val model: AirPodsModel = AirPodsModel.AIRPODS_PRO_3,
     val rawModelId: Int = AirPodsModel.AIRPODS_PRO_3.modelId,
+    val connectedDeviceName: String? = null,
     val left: ComponentBattery = ComponentBattery(null),
     val right: ComponentBattery = ComponentBattery(null),
     val caseBattery: ComponentBattery = ComponentBattery(null),
@@ -76,7 +78,7 @@ data class AirPodsState(
     val lidOpenCounter: Int = 0,
     val rssi: Int = -65,
     val lastUpdatedMillis: Long = 0L,
-    val connectionStatus: ConnectionStatus = ConnectionStatus.SCANNING,
+    val connectionStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED,
     val isDemo: Boolean = false
 ) {
     val hasAnyBattery: Boolean
@@ -86,7 +88,8 @@ data class AirPodsState(
         get() = when (connectionStatus) {
             ConnectionStatus.NO_PERMISSION -> "BLUETOOTH PERMISSION NEEDED"
             ConnectionStatus.BLUETOOTH_OFF -> "BLUETOOTH OFF"
-            ConnectionStatus.SCANNING -> "OPEN CASE NEAR PHONE"
+            ConnectionStatus.DISCONNECTED -> "NOT CONNECTED TO PHONE"
+            ConnectionStatus.SCANNING -> "CONNECTED · READING BATTERY"
             ConnectionStatus.CONNECTED, ConnectionStatus.DEMO -> when {
                 left.isInEar && right.isInEar -> "IN BOTH EARS"
                 left.isInEar && right.isCharging -> "LEFT IN EAR · RIGHT CHARGING"
@@ -108,7 +111,8 @@ data class AirPodsState(
         get() = when (connectionStatus) {
             ConnectionStatus.NO_PERMISSION -> "権限が必要です"
             ConnectionStatus.BLUETOOTH_OFF -> "Bluetooth オフ"
-            ConnectionStatus.SCANNING -> "検索中"
+            ConnectionStatus.DISCONNECTED -> "未接続"
+            ConnectionStatus.SCANNING -> "残量取得中"
             ConnectionStatus.CONNECTED, ConnectionStatus.DEMO -> when {
                 left.isInEar && right.isInEar -> "両耳装着中"
                 left.isInEar && right.isCharging -> "左装着・右充電中"

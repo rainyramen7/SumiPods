@@ -80,9 +80,9 @@ fun SettingsBottomSheet(
             HorizontalDivider(color = SumiColors.Hairline, thickness = 1.dp)
 
             SettingSwitchRow(
-                title = "Auto-Popup on Case Open",
+                title = "Auto-Popup on Connect & Open",
                 subtitle = if (hasOverlayPermission) {
-                    "Slides up over any app when you flip open the case"
+                    "Slides up only when your paired AirPods connect or open"
                 } else {
                     "Grant 'Display over other apps' for instant background popup"
                 },
@@ -122,8 +122,8 @@ fun SettingsBottomSheet(
             HorizontalDivider(color = SumiColors.Hairline, thickness = 1.dp)
 
             SettingSwitchRow(
-                title = "Background BLE Monitor",
-                subtitle = "Low-power listener for AirPods Pro while app is closed",
+                title = "Connected Battery Monitor",
+                subtitle = "Only runs while your paired AirPods are connected (0% idle drain)",
                 checked = preferences.backgroundMonitoringEnabled,
                 onCheckedChange = onToggleBackgroundMonitor
             )
