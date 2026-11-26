@@ -1,4 +1,8 @@
-# SumiPods (墨ポッズ)
+<p align="center">
+  <img src="assets/sumipods-icon.png" alt="SumiPods App Icon" width="128" height="128" />
+</p>
+
+<h1 align="center">SumiPods (墨ポッズ)</h1>
 
 A minimalist Android companion app for checking **Apple AirPods Pro 3 / Pro 2** battery levels, crafted with Japanese **MUJI × Ma (間) Washi** aesthetics, **Sumi-e ink brush** battery bars, **Zen Maru Gothic** typography, and a **Kamon Blueprint** hardware stage.
 
