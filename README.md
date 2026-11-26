@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/sumipods-icon.png" alt="SumiPods App Icon" width="128" height="128" />
+  <img width="1280" height="640" alt="image" src="https://github.com/user-attachments/assets/23f16696-3a2c-4e78-a226-6192bb614fdd" />
 </p>
 
 <h1 align="center">SumiPods (墨ポッズ)</h1>
