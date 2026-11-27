@@ -1,5 +1,11 @@
 package com.sumipods.app.ui.components
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
@@ -16,19 +23,46 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sumipods.app.ble.AirPodsState
 import com.sumipods.app.ble.ComponentBattery
 import com.sumipods.app.ui.theme.SumiColors
 import com.sumipods.app.ui.theme.ZenMaruFontFamily
 
+private val BatteryPercentStyle = TextStyle(
+    fontFamily = ZenMaruFontFamily,
+    fontSize = 17.sp,
+    fontWeight = FontWeight.Bold,
+    fontFeatureSettings = "tnum"
+)
+
 @Composable
 fun AirPodsSumiBatteryList(
-    state: AirPodsState,
+    left: ComponentBattery,
+    right: ComponentBattery,
+    caseBattery: ComponentBattery,
     showJapaneseLabels: Boolean,
     modifier: Modifier = Modifier,
     rowSpacing: Dp = 20.dp,
     barHeight: Dp = 15.dp
 ) {
+    val anyCharging = (left.isCharging && left.isConnected) ||
+        (right.isCharging && right.isConnected) ||
+        (caseBattery.isCharging && caseBattery.isConnected)
+
+    val sharedChargingPhase: State<Float>? = if (anyCharging) {
+        val transition = rememberInfiniteTransition(label = "sumi_charge_shared")
+        transition.animateFloat(
+            initialValue = -0.25f,
+            targetValue = 1.25f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2400, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "sumi_charge_shared_phase"
+        )
+    } else {
+        null
+    }
+
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(rowSpacing)
@@ -36,26 +70,29 @@ fun AirPodsSumiBatteryList(
         SumiBatteryRow(
             labelEn = "LEFT",
             labelJp = "左",
-            battery = state.left,
+            battery = left,
             showJapanese = showJapaneseLabels,
             seed = 11,
-            barHeight = barHeight
+            barHeight = barHeight,
+            sharedChargingPhase = sharedChargingPhase
         )
         SumiBatteryRow(
             labelEn = "RIGHT",
             labelJp = "右",
-            battery = state.right,
+            battery = right,
             showJapanese = showJapaneseLabels,
             seed = 23,
-            barHeight = barHeight
+            barHeight = barHeight,
+            sharedChargingPhase = sharedChargingPhase
         )
         SumiBatteryRow(
             labelEn = "CASE",
             labelJp = "充電ケース",
-            battery = state.caseBattery,
+            battery = caseBattery,
             showJapanese = showJapaneseLabels,
             seed = 37,
-            barHeight = barHeight
+            barHeight = barHeight,
+            sharedChargingPhase = sharedChargingPhase
         )
     }
 }
@@ -67,7 +104,8 @@ private fun SumiBatteryRow(
     battery: ComponentBattery,
     showJapanese: Boolean,
     seed: Int,
-    barHeight: Dp
+    barHeight: Dp,
+    sharedChargingPhase: State<Float>?
 ) {
     val pct = battery.percentage
     val valueColor = when {
@@ -125,13 +163,8 @@ private fun SumiBatteryRow(
                 }
                 Text(
                     text = pct?.let { "$it%" } ?: "—",
-                    style = TextStyle(
-                        fontFamily = ZenMaruFontFamily,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFeatureSettings = "tnum",
-                        color = valueColor
-                    )
+                    style = BatteryPercentStyle,
+                    color = valueColor
                 )
             }
         }
@@ -142,7 +175,8 @@ private fun SumiBatteryRow(
             percentage = pct,
             isCharging = battery.isCharging,
             seed = seed,
-            barHeight = barHeight
+            barHeight = barHeight,
+            sharedChargingPhase = sharedChargingPhase
         )
     }
 }

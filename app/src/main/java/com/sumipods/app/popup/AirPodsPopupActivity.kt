@@ -2,11 +2,13 @@ package com.sumipods.app.popup
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -34,8 +36,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,16 +43,17 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -64,6 +65,7 @@ import com.sumipods.app.ble.DemoPreset
 import com.sumipods.app.ui.components.AirPodsPro2Stage
 import com.sumipods.app.ui.components.AirPodsSumiBatteryList
 import com.sumipods.app.ui.components.HankoSeal
+import com.sumipods.app.ui.components.SumiIcons
 import com.sumipods.app.ui.components.washiPaperBackground
 import com.sumipods.app.ui.theme.SumiColors
 import com.sumipods.app.ui.theme.SumiPodsTheme
@@ -100,8 +102,12 @@ class AirPodsPopupActivity : ComponentActivity() {
                     dimBackground = false,
                     onDismissComplete = {
                         finish()
-                        @Suppress("DEPRECATION")
-                        overridePendingTransition(0, 0)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            overridePendingTransition(0, 0)
+                        }
                     }
                 )
             }
@@ -128,38 +134,38 @@ fun AirPodsPopupOverlay(
     dimBackground: Boolean = true,
     onDismissComplete: () -> Unit
 ) {
-    var visible by remember { mutableStateOf(false) }
+    val visibleState = remember { MutableTransitionState(false) }
     var dismissing by remember { mutableStateOf(false) }
-    var dragAccumulated by remember { mutableFloatStateOf(0f) }
+    val dismissThresholdPx = with(LocalDensity.current) { 40.dp.toPx() }
 
     fun dismiss() {
         if (!dismissing) {
             dismissing = true
-            visible = false
+            visibleState.targetState = false
         }
     }
 
     LaunchedEffect(Unit) {
-        visible = true
+        visibleState.targetState = true
     }
 
-    // Auto-dismiss calmly after 9 seconds unless user already dismissed
-    LaunchedEffect(visible, state.lastUpdatedMillis) {
-        if (visible && !dismissing) {
+    // Auto-dismiss calmly after 9 seconds — keyed ONLY on target visibility (never on BLE timestamps!)
+    LaunchedEffect(visibleState.targetState) {
+        if (visibleState.targetState && !dismissing) {
             delay(9_000L)
             dismiss()
         }
     }
 
-    LaunchedEffect(dismissing) {
-        if (dismissing) {
-            delay(230L)
+    // Complete dismissal immediately when exit transition finishes (honors system Animator Duration Scale)
+    LaunchedEffect(dismissing, visibleState.isIdle, visibleState.currentState) {
+        if (dismissing && visibleState.isIdle && !visibleState.currentState) {
             onDismissComplete()
         }
     }
 
-    val scrimAlpha by animateFloatAsState(
-        targetValue = if (visible && dimBackground) 0.36f else 0f,
+    val scrimAlphaState = animateFloatAsState(
+        targetValue = if (visibleState.targetState && dimBackground) 0.36f else 0f,
         animationSpec = tween(220),
         label = "popup_scrim"
     )
@@ -167,7 +173,12 @@ fun AirPodsPopupOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = scrimAlpha))
+            .drawBehind {
+                val alpha = scrimAlphaState.value
+                if (alpha > 0f) {
+                    drawRect(Color.Black.copy(alpha = alpha))
+                }
+            }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -176,7 +187,7 @@ fun AirPodsPopupOverlay(
         contentAlignment = Alignment.BottomCenter
     ) {
         AnimatedVisibility(
-            visible = visible,
+            visibleState = visibleState,
             enter = slideInVertically(
                 initialOffsetY = { it },
                 animationSpec = spring(
@@ -204,10 +215,14 @@ fun AirPodsPopupOverlay(
                         indication = null,
                         onClick = {}
                     )
-                    .pointerInput(Unit) {
+                    .pointerInput(dismissThresholdPx) {
+                        var dragAccumulated = 0f
                         detectVerticalDragGestures(
                             onDragEnd = {
-                                if (dragAccumulated > 80f) dismiss()
+                                if (dragAccumulated > dismissThresholdPx) dismiss()
+                                dragAccumulated = 0f
+                            },
+                            onDragCancel = {
                                 dragAccumulated = 0f
                             },
                             onVerticalDrag = { _, dragAmount ->
@@ -273,7 +288,7 @@ fun AirPodsPopupOverlay(
                         modifier = Modifier.size(30.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.Close,
+                            imageVector = SumiIcons.Close,
                             contentDescription = "Dismiss",
                             tint = SumiColors.SumiMuted,
                             modifier = Modifier.size(18.dp)
@@ -285,7 +300,11 @@ fun AirPodsPopupOverlay(
                 HorizontalDivider(color = SumiColors.Hairline, thickness = 1.dp)
 
                 AirPodsPro2Stage(
-                    state = state,
+                    isLidOpen = state.isLidOpen,
+                    left = state.left,
+                    right = state.right,
+                    caseBattery = state.caseBattery,
+                    hasAnyBattery = state.hasAnyBattery,
                     showJapaneseLabels = showJapaneseLabels,
                     compact = true,
                     modifier = Modifier.padding(vertical = 16.dp)
@@ -295,7 +314,9 @@ fun AirPodsPopupOverlay(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 AirPodsSumiBatteryList(
-                    state = state,
+                    left = state.left,
+                    right = state.right,
+                    caseBattery = state.caseBattery,
                     showJapaneseLabels = showJapaneseLabels,
                     rowSpacing = 14.dp,
                     barHeight = 13.dp

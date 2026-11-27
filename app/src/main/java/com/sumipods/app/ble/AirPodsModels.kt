@@ -1,5 +1,7 @@
 package com.sumipods.app.ble
 
+import androidx.compose.runtime.Immutable
+
 enum class AirPodsModel(
     val modelId: Int,
     val displayName: String,
@@ -20,8 +22,20 @@ enum class AirPodsModel(
     AIRPODS_GENERIC(0x0000, "AIRPODS PRO", "APPLE BLE", isPro = true);
 
     companion object {
-        fun fromModelId(id: Int): AirPodsModel =
-            entries.firstOrNull { it.modelId == id && it != AIRPODS_GENERIC } ?: AIRPODS_GENERIC
+        fun fromModelId(id: Int): AirPodsModel = when (id) {
+            0x2720 -> AIRPODS_PRO_3
+            0x203F -> AIRPODS_PRO_3_ALT
+            0x2420 -> AIRPODS_PRO_2_USBC
+            0x1420 -> AIRPODS_PRO_2_LIGHTNING
+            0x0E20 -> AIRPODS_PRO_1
+            0x1B20 -> AIRPODS_4_ANC
+            0x1920 -> AIRPODS_4
+            0x1320 -> AIRPODS_3
+            0x0F20 -> AIRPODS_2
+            0x0220 -> AIRPODS_1
+            0x0A20 -> AIRPODS_MAX
+            else -> AIRPODS_GENERIC
+        }
     }
 }
 
@@ -58,6 +72,7 @@ enum class ScanPowerMode {
     BALANCED
 }
 
+@Immutable
 data class ComponentBattery(
     val percentage: Int?,
     val isCharging: Boolean = false,
@@ -67,6 +82,7 @@ data class ComponentBattery(
     val isLow: Boolean get() = percentage != null && percentage <= 20
 }
 
+@Immutable
 data class AirPodsState(
     val model: AirPodsModel = AirPodsModel.AIRPODS_PRO_3,
     val rawModelId: Int = AirPodsModel.AIRPODS_PRO_3.modelId,
@@ -83,6 +99,21 @@ data class AirPodsState(
 ) {
     val hasAnyBattery: Boolean
         get() = left.isConnected || right.isConnected || caseBattery.isConnected
+
+    /**
+     * Compares all user-visible fields excluding volatile timestamps, lid counter, and raw RSSI jitter.
+     * Used to prevent redundant StateFlow emissions, UI recompositions, and notification IPCs.
+     */
+    fun hasSameUiContent(other: AirPodsState): Boolean =
+        model == other.model &&
+            rawModelId == other.rawModelId &&
+            connectedDeviceName == other.connectedDeviceName &&
+            left == other.left &&
+            right == other.right &&
+            caseBattery == other.caseBattery &&
+            isLidOpen == other.isLidOpen &&
+            connectionStatus == other.connectionStatus &&
+            isDemo == other.isDemo
 
     val statusTextEn: String
         get() = when (connectionStatus) {
@@ -138,53 +169,51 @@ data class AirPodsState(
         }
 
     companion object {
-        fun demo(preset: DemoPreset): AirPodsState {
-            val now = System.currentTimeMillis()
-            return when (preset) {
-                DemoPreset.IN_USE -> AirPodsState(
-                    model = AirPodsModel.AIRPODS_PRO_3,
-                    rawModelId = AirPodsModel.AIRPODS_PRO_3.modelId,
-                    left = ComponentBattery(90, isCharging = false, isInEar = true),
-                    right = ComponentBattery(80, isCharging = false, isInEar = true),
-                    caseBattery = ComponentBattery(60, isCharging = false),
-                    isLidOpen = false,
-                    lidOpenCounter = 2,
-                    rssi = -54,
-                    lastUpdatedMillis = now,
-                    connectionStatus = ConnectionStatus.DEMO,
-                    isDemo = true
-                )
-                DemoPreset.CHARGING -> AirPodsState(
-                    model = AirPodsModel.AIRPODS_PRO_3,
-                    rawModelId = AirPodsModel.AIRPODS_PRO_3.modelId,
-                    left = ComponentBattery(100, isCharging = true, isInEar = false),
-                    right = ComponentBattery(90, isCharging = true, isInEar = false),
-                    caseBattery = ComponentBattery(70, isCharging = true),
-                    isLidOpen = true,
-                    lidOpenCounter = 3,
-                    rssi = -49,
-                    lastUpdatedMillis = now,
-                    connectionStatus = ConnectionStatus.DEMO,
-                    isDemo = true
-                )
-                DemoPreset.LOW -> AirPodsState(
-                    model = AirPodsModel.AIRPODS_PRO_3,
-                    rawModelId = AirPodsModel.AIRPODS_PRO_3.modelId,
-                    left = ComponentBattery(10, isCharging = false, isInEar = false),
-                    right = ComponentBattery(20, isCharging = false, isInEar = false),
-                    caseBattery = ComponentBattery(10, isCharging = false),
-                    isLidOpen = true,
-                    lidOpenCounter = 4,
-                    rssi = -58,
-                    lastUpdatedMillis = now,
-                    connectionStatus = ConnectionStatus.DEMO,
-                    isDemo = true
-                )
-            }
+        fun demo(preset: DemoPreset): AirPodsState = when (preset) {
+            DemoPreset.IN_USE -> AirPodsState(
+                model = AirPodsModel.AIRPODS_PRO_3,
+                rawModelId = AirPodsModel.AIRPODS_PRO_3.modelId,
+                left = ComponentBattery(90, isCharging = false, isInEar = true),
+                right = ComponentBattery(80, isCharging = false, isInEar = true),
+                caseBattery = ComponentBattery(60, isCharging = false),
+                isLidOpen = false,
+                lidOpenCounter = 2,
+                rssi = -54,
+                lastUpdatedMillis = 0L,
+                connectionStatus = ConnectionStatus.DEMO,
+                isDemo = true
+            )
+            DemoPreset.CHARGING -> AirPodsState(
+                model = AirPodsModel.AIRPODS_PRO_3,
+                rawModelId = AirPodsModel.AIRPODS_PRO_3.modelId,
+                left = ComponentBattery(100, isCharging = true, isInEar = false),
+                right = ComponentBattery(90, isCharging = true, isInEar = false),
+                caseBattery = ComponentBattery(70, isCharging = true),
+                isLidOpen = true,
+                lidOpenCounter = 3,
+                rssi = -49,
+                lastUpdatedMillis = 0L,
+                connectionStatus = ConnectionStatus.DEMO,
+                isDemo = true
+            )
+            DemoPreset.LOW -> AirPodsState(
+                model = AirPodsModel.AIRPODS_PRO_3,
+                rawModelId = AirPodsModel.AIRPODS_PRO_3.modelId,
+                left = ComponentBattery(10, isCharging = false, isInEar = false),
+                right = ComponentBattery(20, isCharging = false, isInEar = false),
+                caseBattery = ComponentBattery(10, isCharging = false),
+                isLidOpen = true,
+                lidOpenCounter = 4,
+                rssi = -58,
+                lastUpdatedMillis = 0L,
+                connectionStatus = ConnectionStatus.DEMO,
+                isDemo = true
+            )
         }
     }
 }
 
+@Immutable
 data class AppPreferences(
     val autoPopupEnabled: Boolean = true,
     val showJapaneseLabels: Boolean = true,

@@ -20,8 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,6 +39,7 @@ import com.sumipods.app.ble.DemoPreset
 import com.sumipods.app.ui.components.AirPodsPro2Stage
 import com.sumipods.app.ui.components.AirPodsSumiBatteryList
 import com.sumipods.app.ui.components.HankoSeal
+import com.sumipods.app.ui.components.SumiIcons
 import com.sumipods.app.ui.components.washiPaperBackground
 import com.sumipods.app.ui.theme.SumiColors
 import com.sumipods.app.ui.theme.SumiPodsTheme
@@ -117,7 +116,7 @@ fun MainScreen(
                             modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.Tune,
+                                imageVector = SumiIcons.Tune,
                                 contentDescription = "Settings",
                                 tint = SumiColors.SumiWash,
                                 modifier = Modifier.size(20.dp)
@@ -150,7 +149,11 @@ fun MainScreen(
                 // 2. Calm AirPods Pro 3 Kamon Blueprint Stage framed by quiet 1dp hairlines
                 HorizontalDivider(color = SumiColors.Hairline, thickness = 1.dp)
                 AirPodsPro2Stage(
-                    state = state,
+                    isLidOpen = state.isLidOpen,
+                    left = state.left,
+                    right = state.right,
+                    caseBattery = state.caseBattery,
+                    hasAnyBattery = state.hasAnyBattery,
                     showJapaneseLabels = showJp,
                     modifier = Modifier.padding(vertical = 26.dp)
                 )
@@ -160,7 +163,9 @@ fun MainScreen(
 
                 // 3. Sumi Ink 10-Step Battery Readouts
                 AirPodsSumiBatteryList(
-                    state = state,
+                    left = state.left,
+                    right = state.right,
+                    caseBattery = state.caseBattery,
                     showJapaneseLabels = showJp,
                     rowSpacing = 22.dp,
                     barHeight = 16.dp
@@ -177,48 +182,67 @@ fun MainScreen(
                 }
             }
 
-            // 4. Quiet Footer Telemetry
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp)
-            ) {
-                HorizontalDivider(color = SumiColors.Hairline, thickness = 1.dp)
-                Spacer(modifier = Modifier.height(12.dp))
+            // 4. Quiet Footer Telemetry (isolated composable scope for RSSI updates)
+            FooterTelemetryRow(
+                isLidOpen = state.isLidOpen,
+                isDemo = state.isDemo,
+                hasAnyBattery = state.hasAnyBattery,
+                footerModelTag = state.footerModelTag,
+                rssi = state.rssi,
+                showJapanese = showJp
+            )
+        }
+    }
+}
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val lidText = if (showJp) {
-                        if (state.isLidOpen) "蓋 開 · LID OPEN" else "蓋 閉 · LID CLOSED"
-                    } else {
-                        if (state.isLidOpen) "LID OPEN" else "LID CLOSED"
-                    }
-                    Text(
-                        text = lidText,
-                        fontFamily = ZenMaruFontFamily,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        letterSpacing = 0.8.sp,
-                        color = SumiColors.SumiMuted
-                    )
-                    Text(
-                        text = if (state.isDemo) {
-                            "DEMO · 10% STEP"
-                        } else if (state.hasAnyBattery) {
-                            "${state.footerModelTag} · ${state.rssi}dBm"
-                        } else {
-                            "BLE · 10% STEP"
-                        },
-                        fontFamily = ZenMaruFontFamily,
-                        fontSize = 11.sp,
-                        letterSpacing = 0.6.sp,
-                        color = SumiColors.SumiFaint
-                    )
-                }
+@Composable
+private fun FooterTelemetryRow(
+    isLidOpen: Boolean,
+    isDemo: Boolean,
+    hasAnyBattery: Boolean,
+    footerModelTag: String,
+    rssi: Int,
+    showJapanese: Boolean
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 24.dp)
+    ) {
+        HorizontalDivider(color = SumiColors.Hairline, thickness = 1.dp)
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val lidText = if (showJapanese) {
+                if (isLidOpen) "蓋 開 · LID OPEN" else "蓋 閉 · LID CLOSED"
+            } else {
+                if (isLidOpen) "LID OPEN" else "LID CLOSED"
             }
+            Text(
+                text = lidText,
+                fontFamily = ZenMaruFontFamily,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 0.8.sp,
+                color = SumiColors.SumiMuted
+            )
+            Text(
+                text = if (isDemo) {
+                    "DEMO · 10% STEP"
+                } else if (hasAnyBattery) {
+                    "$footerModelTag · ${rssi}dBm"
+                } else {
+                    "BLE · 10% STEP"
+                },
+                fontFamily = ZenMaruFontFamily,
+                fontSize = 11.sp,
+                letterSpacing = 0.6.sp,
+                color = SumiColors.SumiFaint
+            )
         }
     }
 }

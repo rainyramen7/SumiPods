@@ -8,6 +8,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
@@ -23,15 +24,17 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.sumipods.app.ble.AirPodsRepository
+import com.sumipods.app.ble.AirPodsState
+import com.sumipods.app.ble.DemoPreset
 import com.sumipods.app.ble.PermissionHelper
 import com.sumipods.app.ui.theme.SumiPodsTheme
 
 /**
  * Displays the MUJI × Washi AirPods auto-popup directly over any app via WindowManager
- * (TYPE_APPLICATION_OVERLAY) without pausing the user's current app.
+ * (TYPE_APPLICATION_OVERLAY) without pausing or stealing keyboard focus from the user's current app.
  */
 class AirPodsOverlayController(
-    private val context: Context,
+    context: Context,
     private val repository: AirPodsRepository
 ) {
     private val appContext = context.applicationContext
@@ -51,9 +54,11 @@ class AirPodsOverlayController(
                 shown = true
                 return@Runnable
             }
+            var owner: OverlayLifecycleOwner? = null
+            var composeView: ComposeView? = null
             try {
-                val owner = OverlayLifecycleOwner().also { it.onCreate() }
-                val composeView = ComposeView(appContext).apply {
+                owner = OverlayLifecycleOwner().also { it.onCreate() }
+                composeView = ComposeView(appContext).apply {
                     setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
                     setViewTreeLifecycleOwner(owner)
                     setViewTreeViewModelStoreOwner(owner)
@@ -62,10 +67,13 @@ class AirPodsOverlayController(
                         SumiPodsTheme {
                             val state by repository.state.collectAsStateWithLifecycle()
                             val prefs by repository.preferences.collectAsStateWithLifecycle()
+                            val fallbackDemo = remember {
+                                AirPodsState.demo(DemoPreset.CHARGING).copy(isLidOpen = true)
+                            }
                             val displayState = if (state.hasAnyBattery) {
                                 state.copy(isLidOpen = true)
                             } else {
-                                repository.currentPopupState()
+                                fallbackDemo
                             }
                             AirPodsPopupOverlay(
                                 state = displayState,
@@ -81,7 +89,8 @@ class AirPodsOverlayController(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                     PixelFormat.TRANSLUCENT
                 ).apply {
@@ -95,7 +104,10 @@ class AirPodsOverlayController(
                 shown = true
             } catch (t: Throwable) {
                 Log.w(TAG, "Unable to attach overlay window", t)
-                dismiss()
+                runCatching { composeView?.disposeComposition() }
+                runCatching { owner?.onDestroy() }
+                activeView = null
+                lifecycleOwner = null
             }
         }
 
@@ -109,22 +121,19 @@ class AirPodsOverlayController(
     }
 
     fun dismiss() {
+        mainHandler.removeCallbacksAndMessages(null)
         mainHandler.post {
             val view = activeView ?: return@post
             activeView = null
-            try {
-                lifecycleOwner?.onDestroy()
-            } catch (_: Throwable) {
-            }
+            val owner = lifecycleOwner
             lifecycleOwner = null
-            try {
-                windowManager.removeViewImmediate(view)
-            } catch (_: Throwable) {
-                try {
-                    windowManager.removeView(view)
-                } catch (_: Throwable) {
-                }
+
+            runCatching { view.disposeComposition() }
+            if (view.isAttachedToWindow) {
+                runCatching { windowManager.removeViewImmediate(view) }
+                    .onFailure { runCatching { windowManager.removeView(view) } }
             }
+            runCatching { owner?.onDestroy() }
         }
     }
 
@@ -146,18 +155,21 @@ class AirPodsOverlayController(
         fun onCreate() {
             savedStateController.performAttach()
             savedStateController.performRestore(null)
-            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+            lifecycleRegistry.currentState = Lifecycle.State.STARTED
         }
 
         fun onResume() {
-            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+            if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+            }
         }
 
         fun onDestroy() {
-            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
-            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+            if (lifecycleRegistry.currentState != Lifecycle.State.INITIALIZED &&
+                lifecycleRegistry.currentState != Lifecycle.State.DESTROYED
+            ) {
+                lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+            }
             viewModelStore.clear()
         }
     }

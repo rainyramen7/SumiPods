@@ -60,14 +60,12 @@ class MainActivity : ComponentActivity() {
                         hasOverlayPermission = hasOverlayPermission,
                         onRequestPermissions = {
                             permissionLauncher.launch(
-                                PermissionHelper.requiredRuntimePermissions().toTypedArray()
+                                PermissionHelper.requiredRuntimePermissionsArray()
                             )
                         },
                         onOpenOverlaySettings = ::openOverlaySettings,
                         onOpenSettings = { showSettings = true },
-                        onSelectDemoPreset = { preset ->
-                            repository.setDemoPreset(preset)
-                        }
+                        onSelectDemoPreset = repository::setDemoPreset
                     )
                 }
 
@@ -76,7 +74,7 @@ class MainActivity : ComponentActivity() {
                         preferences = preferences,
                         hasOverlayPermission = hasOverlayPermission,
                         onDismiss = { showSettings = false },
-                        onToggleAutoPopup = { repository.setAutoPopupEnabled(it) },
+                        onToggleAutoPopup = repository::setAutoPopupEnabled,
                         onToggleBackgroundMonitor = { enabled ->
                             repository.setBackgroundMonitoringEnabled(enabled)
                             if (enabled && hasBluetoothPermission && repository.isPairedAirPodsConnected) {
@@ -88,9 +86,9 @@ class MainActivity : ComponentActivity() {
                                 AirPodsMonitorService.stop(this@MainActivity)
                             }
                         },
-                        onToggleJapaneseLabels = { repository.setShowJapaneseLabels(it) },
-                        onSelectProximity = { repository.setProximityLevel(it) },
-                        onToggleDemoMode = { repository.setDemoModeEnabled(it) },
+                        onToggleJapaneseLabels = repository::setShowJapaneseLabels,
+                        onSelectProximity = repository::setProximityLevel,
+                        onToggleDemoMode = repository::setDemoModeEnabled,
                         onOpenOverlaySettings = ::openOverlaySettings
                     )
                 }
@@ -107,6 +105,10 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         repository.isAppInForeground = false
+    }
+
+    override fun onStop() {
+        super.onStop()
         if (!repository.preferences.value.backgroundMonitoringEnabled ||
             !repository.isPairedAirPodsConnected
         ) {
@@ -126,7 +128,7 @@ class MainActivity : ComponentActivity() {
 
         // Strict Option 1: only scan & run monitor service when user's paired AirPods are connected
         lifecycleScope.launch {
-            val connectedDevice = AirPodsConnectionProbe.findConnectedAirPods(this@MainActivity)
+            val connectedDevice = AirPodsConnectionProbe.findConnectedAirPods(applicationContext)
             if (connectedDevice != null) {
                 repository.onPairedAirPodsConnected(
                     deviceName = AirPodsDeviceMatcher.safeName(connectedDevice),
@@ -135,14 +137,14 @@ class MainActivity : ComponentActivity() {
                 repository.scanner.startScanning(powerMode = ScanPowerMode.LOW_POWER)
                 if (repository.preferences.value.backgroundMonitoringEnabled) {
                     AirPodsMonitorService.start(
-                        this@MainActivity,
+                        applicationContext,
                         powerMode = ScanPowerMode.LOW_POWER
                     )
                 }
             } else {
                 repository.onPairedAirPodsDisconnected()
                 repository.scanner.stopScanning()
-                AirPodsMonitorService.stop(this@MainActivity)
+                AirPodsMonitorService.stop(applicationContext)
             }
         }
     }

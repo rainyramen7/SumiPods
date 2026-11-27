@@ -10,26 +10,50 @@ import androidx.core.content.ContextCompat
 
 object PermissionHelper {
 
+    private val BLUETOOTH_PERMISSIONS_S_PLUS: List<String> = listOf(
+        Manifest.permission.BLUETOOTH_SCAN,
+        Manifest.permission.BLUETOOTH_CONNECT
+    )
+    private val BLUETOOTH_PERMISSIONS_LEGACY: List<String> = listOf(
+        Manifest.permission.ACCESS_FINE_LOCATION
+    )
+
+    private val RUNTIME_PERMISSIONS_TIRAMISU_PLUS: Array<String> = arrayOf(
+        Manifest.permission.BLUETOOTH_SCAN,
+        Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.POST_NOTIFICATIONS
+    )
+    private val RUNTIME_PERMISSIONS_S_TO_S2: Array<String> = arrayOf(
+        Manifest.permission.BLUETOOTH_SCAN,
+        Manifest.permission.BLUETOOTH_CONNECT
+    )
+    private val RUNTIME_PERMISSIONS_LEGACY: Array<String> = arrayOf(
+        Manifest.permission.ACCESS_FINE_LOCATION
+    )
+
     fun requiredBluetoothPermissions(): List<String> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            listOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT
-            )
+            BLUETOOTH_PERMISSIONS_S_PLUS
         } else {
-            listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            BLUETOOTH_PERMISSIONS_LEGACY
         }
 
-    fun requiredRuntimePermissions(): List<String> = buildList {
-        addAll(requiredBluetoothPermissions())
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.POST_NOTIFICATIONS)
+    fun requiredRuntimePermissionsArray(): Array<String> =
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> RUNTIME_PERMISSIONS_TIRAMISU_PLUS
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> RUNTIME_PERMISSIONS_S_TO_S2
+            else -> RUNTIME_PERMISSIONS_LEGACY
         }
-    }
 
     fun hasBluetoothPermissions(context: Context): Boolean =
-        requiredBluetoothPermissions().all { perm ->
-            ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) ==
+                PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
         }
 
     fun hasNotificationPermission(context: Context): Boolean =

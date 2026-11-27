@@ -1,12 +1,12 @@
 package com.sumipods.app.ui.components
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -17,6 +17,7 @@ import com.sumipods.app.ui.theme.ZenMaruFontFamily
 
 /**
  * Option 4A signature Shu-iro vermilion Hanko seal badge.
+ * Draws directly on the Box via `drawWithCache` (1 fewer layout node, cached Stroke).
  */
 @Composable
 fun HankoSeal(
@@ -27,17 +28,23 @@ fun HankoSeal(
 ) {
     val sealColor = if (isActive) SumiColors.HankoVermilion else SumiColors.SumiFaint
     Box(
-        modifier = modifier.size(size),
+        modifier = modifier
+            .size(size)
+            .drawWithCache {
+                val innerStroke = Stroke(width = 0.9.dp.toPx())
+                val innerRingColor = SumiColors.WashiPaper.copy(alpha = 0.45f)
+                val innerRadius = this.size.minDimension * 0.41f
+                onDrawBehind {
+                    drawCircle(color = sealColor)
+                    drawCircle(
+                        color = innerRingColor,
+                        radius = innerRadius,
+                        style = innerStroke
+                    )
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(size)) {
-            drawCircle(color = sealColor)
-            drawCircle(
-                color = SumiColors.WashiPaper.copy(alpha = 0.45f),
-                radius = this.size.minDimension * 0.41f,
-                style = Stroke(width = 0.9.dp.toPx())
-            )
-        }
         Text(
             text = if (showJapanese) "音" else "●",
             fontFamily = ZenMaruFontFamily,

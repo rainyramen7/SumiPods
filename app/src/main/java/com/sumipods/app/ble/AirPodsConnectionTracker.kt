@@ -21,17 +21,13 @@ object AirPodsDeviceMatcher {
     private val APPLE_AAP_UUID: UUID = UUID.fromString("74ec2172-0bad-4d01-8f77-997b2be0722a")
 
     @SuppressLint("MissingPermission")
-    fun isAirPodsDevice(device: BluetoothDevice?): Boolean {
+    fun isAirPodsDevice(device: BluetoothDevice?, cachedName: String? = safeName(device)): Boolean {
         if (device == null) return false
-        val nameMatches = runCatching {
-            device.name?.contains("AirPods", ignoreCase = true) == true
-        }.getOrDefault(false)
-        if (nameMatches) return true
+        if (cachedName?.contains("AirPods", ignoreCase = true) == true) return true
 
-        val hasAppleAapUuid = runCatching {
+        return runCatching {
             device.uuids?.any { it.uuid == APPLE_AAP_UUID } == true
         }.getOrDefault(false)
-        return hasAppleAapUuid
     }
 
     @SuppressLint("MissingPermission")
@@ -42,18 +38,29 @@ object AirPodsDeviceMatcher {
 /**
  * Queries Android's A2DP and HFP Bluetooth profiles to determine whether any paired AirPods
  * are currently connected to this phone.
+ *
+ * Uses synchronous `getProfileConnectionState()` short-circuiting so zero Binder service
+ * bindings occur when no Bluetooth audio device is connected, and always binds with
+ * `applicationContext` to prevent Activity ServiceConnection leaks.
  */
 object AirPodsConnectionProbe {
+
+    private val AUDIO_PROFILES = intArrayOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET)
 
     @SuppressLint("MissingPermission")
     suspend fun findConnectedAirPods(context: Context): BluetoothDevice? {
         if (!PermissionHelper.hasBluetoothPermissions(context)) return null
-        val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val appContext = context.applicationContext
+        val manager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         val adapter = manager?.adapter ?: return null
         if (!adapter.isEnabled) return null
 
-        for (profile in listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET)) {
-            val connected = getConnectedDevices(context, adapter, profile)
+        for (profile in AUDIO_PROFILES) {
+            val state = runCatching { adapter.getProfileConnectionState(profile) }
+                .getOrDefault(BluetoothProfile.STATE_DISCONNECTED)
+            if (state != BluetoothProfile.STATE_CONNECTED) continue
+
+            val connected = getConnectedDevices(appContext, adapter, profile)
             val match = connected.firstOrNull { AirPodsDeviceMatcher.isAirPodsDevice(it) }
             if (match != null) return match
         }
@@ -61,8 +68,17 @@ object AirPodsConnectionProbe {
     }
 
     @SuppressLint("MissingPermission")
+    fun isAnyAudioProfileConnected(context: Context, profileToCheck: Int): Boolean {
+        val manager = context.applicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val adapter = manager?.adapter ?: return false
+        if (!adapter.isEnabled) return false
+        return runCatching { adapter.getProfileConnectionState(profileToCheck) }
+            .getOrDefault(BluetoothProfile.STATE_DISCONNECTED) == BluetoothProfile.STATE_CONNECTED
+    }
+
+    @SuppressLint("MissingPermission")
     private suspend fun getConnectedDevices(
-        context: Context,
+        appContext: Context,
         adapter: BluetoothAdapter,
         profileType: Int
     ): List<BluetoothDevice> {
@@ -78,17 +94,17 @@ object AirPodsConnectionProbe {
                 if (!deferred.isCompleted) deferred.complete(emptyList())
             }
         }
-        val bound = runCatching { adapter.getProfileProxy(context, listener, profileType) }
+        val bound = runCatching { adapter.getProfileProxy(appContext, listener, profileType) }
             .getOrDefault(false)
         if (!bound) return emptyList()
-        return withTimeoutOrNull(1500L) { deferred.await() } ?: emptyList()
+        return withTimeoutOrNull(1_500L) { deferred.await() } ?: emptyList()
     }
 }
 
 /**
  * System broadcast receiver that starts BLE battery monitoring ONLY when your paired AirPods
- * connect to this phone, and shuts it down completely when they disconnect (0% idle drain,
- * 0% stranger AirPods popups).
+ * connect to this phone via A2DP/HFP, and shuts it down completely when both audio profiles
+ * disconnect (0% idle drain, 0% stranger AirPods popups, 0% non-audio BT wakeups).
  */
 class AirPodsConnectionReceiver : BroadcastReceiver() {
 
@@ -96,34 +112,40 @@ class AirPodsConnectionReceiver : BroadcastReceiver() {
         val action = intent.action ?: return
         if (!PermissionHelper.hasBluetoothPermissions(context)) return
 
+        val state = intent.getIntExtra(
+            BluetoothProfile.EXTRA_STATE,
+            BluetoothProfile.STATE_DISCONNECTED
+        )
+        if (state != BluetoothProfile.STATE_CONNECTED && state != BluetoothProfile.STATE_DISCONNECTED) {
+            return
+        }
+
         val device = extractDevice(intent)
-        if (!AirPodsDeviceMatcher.isAirPodsDevice(device)) return
+        val deviceName = AirPodsDeviceMatcher.safeName(device)
+        if (!AirPodsDeviceMatcher.isAirPodsDevice(device, cachedName = deviceName)) return
 
         val app = context.applicationContext as? SumiPodsApplication ?: return
         val repository = app.repository
-        val deviceName = AirPodsDeviceMatcher.safeName(device)
         val address = device?.address
 
         when (action) {
-            BluetoothDevice.ACTION_ACL_CONNECTED -> {
-                Log.i(TAG, "Paired AirPods ACL connected: $deviceName")
-                handleConnected(context, repository, deviceName, address)
-            }
-            BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
-                Log.i(TAG, "Paired AirPods ACL disconnected: $deviceName")
-                handleDisconnected(context, repository, address)
-            }
             BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED,
             BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> {
-                val state = intent.getIntExtra(
-                    BluetoothProfile.EXTRA_STATE,
-                    BluetoothProfile.STATE_DISCONNECTED
-                )
                 if (state == BluetoothProfile.STATE_CONNECTED) {
                     Log.i(TAG, "Paired AirPods profile connected ($action): $deviceName")
                     handleConnected(context, repository, deviceName, address)
-                } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.i(TAG, "Paired AirPods profile disconnected ($action): $deviceName")
+                } else {
+                    // Only tear down monitoring if the companion audio profile is also disconnected
+                    val otherProfile = if (action == BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED) {
+                        BluetoothProfile.HEADSET
+                    } else {
+                        BluetoothProfile.A2DP
+                    }
+                    if (AirPodsConnectionProbe.isAnyAudioProfileConnected(context, otherProfile)) {
+                        Log.d(TAG, "Ignoring partial profile disconnect; companion profile still active")
+                        return
+                    }
+                    Log.i(TAG, "Paired AirPods disconnected ($action): $deviceName")
                     handleDisconnected(context, repository, address)
                 }
             }
